@@ -156,21 +156,35 @@
 .social-link {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.8rem;
+  gap: 0.8rem;
+  padding: 1rem;
   background: rgba(31, 41, 55, 0.05);
-  border-radius: 10px;
+  border-radius: 12px;
   color: #111827;
   text-decoration: none;
   transition: all 0.3s ease;
   border: 1px solid rgba(31, 41, 55, 0.1);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.social-link svg {
+  width: 24px;
+  height: 24px;
+  transition: all 0.3s ease;
+  flex-shrink: 0;
 }
 
 .social-link:hover {
   background: #3B82F6;
   color: #FFFFFF;
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.3);
+  border-color: #3B82F6;
+}
+
+.social-link:hover svg {
+  transform: scale(1.1);
 }
 
 .contact-form-container {
