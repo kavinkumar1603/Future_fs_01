@@ -11,15 +11,23 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// MongoDB connection
+// MongoDB connection with fallback
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://kavin88701:LNYGENaMCfDhXmxD@cluster0.dfpaodr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
 
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
+let isMongoConnected = false;
+
+mongoose.connect(MONGODB_URI)
+.then(() => {
+  console.log('✅ Connected to MongoDB Atlas');
+  isMongoConnected = true;
 })
-.then(() => console.log('✅ Connected to MongoDB'))
-.catch((error) => console.error('❌ MongoDB connection error:', error));
+.catch((error) => {
+  console.error('❌ MongoDB connection failed:', error.message);
+  console.log('⚠️  Server will continue without MongoDB (emails will still work)');
+  console.log('🔧 To fix: Add your IP address to MongoDB Atlas whitelist');
+  console.log('📝 Visit: https://cloud.mongodb.com/v2/PROJECT_ID#security/network/whitelist');
+  isMongoConnected = false;
+});
 
 // Contact form schema
 const contactSchema = new mongoose.Schema({
@@ -64,6 +72,7 @@ const contactSchema = new mongoose.Schema({
 const Contact = mongoose.model('Contact', contactSchema);
 
 // Middleware
+app.set('trust proxy', 1); // Trust first proxy for rate limiting
 app.use(cors({
   origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
   credentials: true
@@ -82,13 +91,22 @@ const contactLimiter = rateLimit({
 
 // Email configuration
 const createTransporter = () => {
-  // Gmail configuration (you can modify this for other email providers)
-  return nodemailer.createTransporter({
+  // Gmail configuration with better timeout settings
+  return nodemailer.createTransport({
     service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false, // Use TLS
     auth: {
-      user: process.env.EMAIL_USER, // Your Gmail address
-      pass: process.env.EMAIL_PASS, // Your App Password (not regular password)
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
     },
+    tls: {
+      rejectUnauthorized: false
+    },
+    connectionTimeout: 60000, // 60 seconds
+    greetingTimeout: 30000,    // 30 seconds
+    socketTimeout: 60000       // 60 seconds
   });
 };
 
@@ -103,12 +121,21 @@ app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'Server is running!', 
     timestamp: new Date().toISOString(),
-    mongodb: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'
+    mongodb: isMongoConnected ? 'Connected' : 'Disconnected',
+    emailService: 'Ready'
   });
 });
 
 // Get all contact submissions (for admin purposes)
 app.get('/api/contacts', async (req, res) => {
+  if (!isMongoConnected) {
+    return res.status(503).json({
+      error: 'Database unavailable',
+      message: 'MongoDB is not connected. Please check database connection.',
+      details: 'Add your IP to MongoDB Atlas whitelist to enable database features.'
+    });
+  }
+
   try {
     const contacts = await Contact.find().sort({ submittedAt: -1 }).limit(50);
     res.json({
@@ -153,21 +180,50 @@ app.post('/api/contact', contactLimiter, async (req, res) => {
       });
     }
 
-    // Save to MongoDB first
-    const contactSubmission = new Contact({
-      name,
-      email,
-      subject,
-      message,
-      ipAddress,
-      emailSent: false
-    });
+    // Save to MongoDB (if connected)
+    let savedContact = null;
+    if (isMongoConnected) {
+      try {
+        const contactSubmission = new Contact({
+          name,
+          email,
+          subject,
+          message,
+          ipAddress,
+          emailSent: false
+        });
 
-    const savedContact = await contactSubmission.save();
-    console.log(`📝 Contact saved to database with ID: ${savedContact._id}`);
+        savedContact = await contactSubmission.save();
+        console.log(`📝 Contact saved to database with ID: ${savedContact._id}`);
+      } catch (dbError) {
+        console.error('Database save error:', dbError.message);
+        console.log('⚠️  Continuing without database save...');
+      }
+    } else {
+      console.log('⚠️  MongoDB not connected - skipping database save');
+    }
 
     // Create transporter
     const transporter = createTransporter();
+
+    // Check if email is properly configured
+    if (!process.env.EMAIL_PASS || process.env.EMAIL_PASS === 'your-app-password-here') {
+      console.log('⚠️  Email not configured - simulating email send');
+      
+      // Simulate successful email send for testing
+      console.log(`📧 [SIMULATED] Email would be sent to kavin88701@gmail.com`);
+      console.log(`📧 [SIMULATED] Auto-reply would be sent to ${email}`);
+      console.log(`Contact form submission from ${email} - Subject: ${subject}`);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Message received successfully! (Email simulation mode - configure EMAIL_PASS in .env for real emails)',
+        submissionId: savedContact ? savedContact._id : null,
+        databaseSaved: !!savedContact,
+        emailSent: false,
+        note: 'Set up Gmail App Password in .env to enable real email sending'
+      });
+    }
 
     // Email content to send to you
     const mailOptions = {
@@ -183,7 +239,7 @@ app.post('/api/contact', contactLimiter, async (req, res) => {
             <p style="margin: 5px 0;"><strong>Name:</strong> ${name}</p>
             <p style="margin: 5px 0;"><strong>Email:</strong> ${email}</p>
             <p style="margin: 5px 0;"><strong>Subject:</strong> ${subject}</p>
-            <p style="margin: 5px 0;"><strong>Submission ID:</strong> ${savedContact._id}</p>
+            ${savedContact ? `<p style="margin: 5px 0;"><strong>Submission ID:</strong> ${savedContact._id}</p>` : ''}
             <p style="margin: 5px 0;"><strong>IP Address:</strong> ${ipAddress}</p>
           </div>
           
@@ -223,7 +279,7 @@ app.post('/api/contact', contactLimiter, async (req, res) => {
           
           <div style="margin: 30px 0; padding: 20px; background-color: #f8f9fa; border-radius: 5px;">
             <h3 style="color: #333; margin-top: 0;">Your Message Summary:</h3>
-            <p style="margin: 5px 0;"><strong>Reference ID:</strong> ${savedContact._id}</p>
+            ${savedContact ? `<p style="margin: 5px 0;"><strong>Reference ID:</strong> ${savedContact._id}</p>` : ''}
             <p style="margin: 5px 0;"><strong>Subject:</strong> ${subject}</p>
             <p style="margin: 5px 0;"><strong>Message:</strong> ${message.length > 100 ? message.substring(0, 100) + '...' : message}</p>
           </div>
@@ -245,16 +301,25 @@ app.post('/api/contact', contactLimiter, async (req, res) => {
     await transporter.sendMail(mailOptions);
     await transporter.sendMail(autoReplyOptions);
 
-    // Update the document to mark email as sent
-    await Contact.findByIdAndUpdate(savedContact._id, { emailSent: true });
+    // Update the document to mark email as sent (if saved to DB)
+    if (savedContact && isMongoConnected) {
+      try {
+        await Contact.findByIdAndUpdate(savedContact._id, { emailSent: true });
+        console.log(`📧 Emails sent successfully for submission ${savedContact._id}`);
+      } catch (updateError) {
+        console.log('📧 Emails sent successfully (DB update failed)');
+      }
+    } else {
+      console.log('📧 Emails sent successfully');
+    }
 
-    console.log(`📧 Emails sent successfully for submission ${savedContact._id}`);
     console.log(`Contact form submission from ${email} - Subject: ${subject}`);
 
     res.status(200).json({
       success: true,
       message: 'Message sent successfully! Thank you for reaching out.',
-      submissionId: savedContact._id
+      submissionId: savedContact ? savedContact._id : null,
+      databaseSaved: !!savedContact
     });
 
   } catch (error) {
@@ -290,7 +355,16 @@ app.listen(PORT, () => {
   console.log(`📧 Email service configured for: kavin88701@gmail.com`);
   console.log(`🌐 Health check: http://localhost:${PORT}/api/health`);
   console.log(`📊 Contacts endpoint: http://localhost:${PORT}/api/contacts`);
-  console.log(`💾 MongoDB connection status: ${mongoose.connection.readyState === 1 ? 'Connected' : 'Connecting...'}`);
+  console.log(`💾 MongoDB connection status: ${isMongoConnected ? 'Connected' : 'Disconnected'}`);
+  
+  if (!isMongoConnected) {
+    console.log(`\n🔧 TO FIX MONGODB CONNECTION:`);
+    console.log(`1. Go to MongoDB Atlas: https://cloud.mongodb.com`);
+    console.log(`2. Navigate to: Security → Network Access`);
+    console.log(`3. Click "Add IP Address"`);
+    console.log(`4. Add your current IP or use 0.0.0.0/0 for testing`);
+    console.log(`5. Restart the server\n`);
+  }
 });
 
 module.exports = app;
