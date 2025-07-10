@@ -102,7 +102,7 @@ const About = ({ setCurrentPage }) => {
           <h2>Experience & Education</h2>
           <div className="timeline">
             <div className="timeline-item">
-              <div className="timeline-date">2024 - Present</div>
+              <div className="timeline-date">2025 - Present</div>
               <div className="timeline-content">
                 <h3>Full Stack Developer</h3>
                 <p>Developing modern web applications using React.js, Node.js, and MongoDB. 
@@ -110,7 +110,7 @@ const About = ({ setCurrentPage }) => {
               </div>
             </div>
             <div className="timeline-item">
-              <div className="timeline-date">2023 - 2024</div>
+              <div className="timeline-date">2024 - 2025</div>
               <div className="timeline-content">
                 <h3>Web Development Learning</h3>
                 <p>Intensive learning and practice in modern web development technologies, 
