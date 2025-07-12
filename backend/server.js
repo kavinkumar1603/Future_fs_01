@@ -31,22 +31,27 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // MongoDB Connection with your credentials
-const MONGODB_URI = 'mongodb+srv://kavin88701:LNYGENaMCfDhXmxD@cluster0.dfpaodr.mongodb.net/portfolio?retryWrites=true&w=majority&appName=Cluster0';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://kavin88701:LNYGENaMCfDhXmxD@cluster0.dfpaodr.mongodb.net/portfolio?retryWrites=true&w=majority&appName=Cluster0';
 
 let isMongoConnected = false;
 
 // Enhanced MongoDB connection with retry logic
 const connectToMongoDB = async () => {
   try {
-    await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 10000,
+    // Try with direct connection first, then SRV
+    const connectionOptions = {
+      serverSelectionTimeoutMS: 30000,  
       connectTimeoutMS: 30000,
       socketTimeoutMS: 30000,
       maxPoolSize: 10,
-      minPoolSize: 5,
-      bufferCommands: false,
-      bufferMaxEntries: 0
-    });
+      minPoolSize: 2,
+      family: 4, // Force IPv4
+    };
+
+    console.log('🔄 Attempting MongoDB connection...');
+    await mongoose.connect(MONGODB_URI, connectionOptions);
+    console.log('🔄 Attempting MongoDB connection...');
+    await mongoose.connect(MONGODB_URI, connectionOptions);
     
     isMongoConnected = true;
     console.log('✅ Connected to MongoDB Atlas successfully');
@@ -58,12 +63,48 @@ const connectToMongoDB = async () => {
   } catch (error) {
     isMongoConnected = false;
     console.error('❌ MongoDB connection failed:', error.message);
-    console.log('⚠️  Server will continue without database (emails will still work)');
     
-    // Retry connection after 30 seconds
-    setTimeout(connectToMongoDB, 30000);
+    // Try alternative connection string without SRV
+    if (error.message.includes('querySrv') || error.message.includes('ECONNREFUSED')) {
+      console.log('🔄 Trying alternative connection method...');
+      try {
+        // Alternative connection string (direct connection)
+        const altUri = 'mongodb://kavin88701:LNYGENaMCfDhXmxD@cluster0-shard-00-00.dfpaodr.mongodb.net:27017,cluster0-shard-00-01.dfpaodr.mongodb.net:27017,cluster0-shard-00-02.dfpaodr.mongodb.net:27017/portfolio?ssl=true&replicaSet=atlas-11bqeq-shard-0&authSource=admin&retryWrites=true&w=majority';
+        await mongoose.connect(altUri, connectionOptions);
+        isMongoConnected = true;
+        console.log('✅ Connected to MongoDB using alternative method');
+        return;
+      } catch (altError) {
+        console.error('❌ Alternative connection also failed:', altError.message);
+      }
+    }
+    
+    console.log('⚠️  Server will continue without database (emails will still work)');
+    console.log('💡 Please check:');
+    console.log('   1. Internet connection');
+    console.log('   2. MongoDB Atlas whitelist (add 0.0.0.0/0 for all IPs)');
+    console.log('   3. MongoDB Atlas cluster status');
+    
+    // Retry connection after 60 seconds
+    setTimeout(connectToMongoDB, 60000);
   }
 };
+
+// MongoDB connection event listeners
+mongoose.connection.on('connected', () => {
+  isMongoConnected = true;
+  console.log('🔗 Mongoose connected to MongoDB Atlas');
+});
+
+mongoose.connection.on('error', (err) => {
+  isMongoConnected = false;
+  console.error('❌ Mongoose connection error:', err.message);
+});
+
+mongoose.connection.on('disconnected', () => {
+  isMongoConnected = false;
+  console.log('🔌 Mongoose disconnected from MongoDB Atlas');
+});
 
 // Initialize MongoDB connection
 connectToMongoDB();
